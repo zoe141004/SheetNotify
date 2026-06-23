@@ -8,4 +8,5 @@ dist/
 coverage/
 backend/alembic.ini
 
-Sheetnotify system prompt.md
+"Sheetnotify system prompt.md"
+.env.example
