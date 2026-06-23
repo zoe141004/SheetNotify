@@ -2,6 +2,8 @@
 Telegram Bot service — sending messages and handling webhook updates.
 """
 
+import html
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -14,6 +16,40 @@ from config import settings
 from models.user import User
 
 TELEGRAM_API = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}"
+logger = logging.getLogger(__name__)
+
+
+async def _telegram_api_post(endpoint: str, payload: dict[str, object] | None = None) -> bool:
+    """Call the Telegram Bot API and validate the JSON response body."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(f"{TELEGRAM_API}/{endpoint}", json=payload)
+            try:
+                data = response.json()
+            except ValueError:
+                data = {}
+
+            if response.is_error:
+                logger.warning(
+                    "Telegram API %s returned HTTP %s: %s",
+                    endpoint,
+                    response.status_code,
+                    data.get("description", response.text),
+                )
+                return False
+
+            if data.get("ok") is True:
+                return True
+
+            logger.warning(
+                "Telegram API %s returned an error: %s",
+                endpoint,
+                data.get("description", data),
+            )
+            return False
+    except (httpx.HTTPError, ValueError):
+        logger.exception("Telegram API %s request failed", endpoint)
+        return False
 
 
 async def send_telegram_message(
@@ -22,38 +58,30 @@ async def send_telegram_message(
     parse_mode: str = "HTML",
 ) -> bool:
     """Send a message via Telegram Bot API. Returns True on success."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{TELEGRAM_API}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-            },
-        )
-        return response.status_code == 200
+    return await _telegram_api_post(
+        "sendMessage",
+        {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+        },
+    )
 
 
 async def set_telegram_webhook(webhook_url: str) -> bool:
     """Register the webhook URL with Telegram."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{TELEGRAM_API}/setWebhook",
-            json={
-                "url": webhook_url,
-                "secret_token": settings.TELEGRAM_WEBHOOK_SECRET,
-            },
-        )
-        return response.status_code == 200
+    return await _telegram_api_post(
+        "setWebhook",
+        {
+            "url": webhook_url,
+            "secret_token": settings.TELEGRAM_WEBHOOK_SECRET,
+        },
+    )
 
 
 async def delete_telegram_webhook() -> bool:
     """Remove the Telegram webhook."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{TELEGRAM_API}/deleteWebhook",
-        )
-        return response.status_code == 200
+    return await _telegram_api_post("deleteWebhook")
 
 
 async def handle_telegram_start(
@@ -105,7 +133,7 @@ async def handle_telegram_start(
 
     return (
         f"✅ Successfully linked!\n\n"
-        f"Account: {user.email}\n"
+        f"Account: {html.escape(user.email)}\n"
         f"You will now receive notifications when new data is added to your monitored Google Sheets."
     )
 

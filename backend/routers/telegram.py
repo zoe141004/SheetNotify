@@ -2,6 +2,7 @@
 Telegram router — bot webhook, link URL generation.
 """
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -18,6 +19,7 @@ from services.telegram import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/webhook")
@@ -34,7 +36,12 @@ async def telegram_webhook(
     if x_telegram_bot_api_secret_token != settings.TELEGRAM_WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="Invalid webhook secret")
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        logger.exception("Invalid Telegram webhook payload")
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
     message = body.get("message", {})
     text = message.get("text", "")
     chat = message.get("chat", {})
@@ -49,9 +56,11 @@ async def telegram_webhook(
         parts = text.split(maxsplit=1)
         link_token = parts[1] if len(parts) > 1 else None
         reply = await handle_telegram_start(db, chat_id, username, link_token)
-        await send_telegram_message(chat_id, reply)
+        success = await send_telegram_message(chat_id, reply)
+        if not success:
+            logger.error("Failed to send /start reply to Telegram chat %s", chat_id)
     elif text == "/help":
-        await send_telegram_message(
+        success = await send_telegram_message(
             chat_id,
             "🔔 <b>SheetNotify Bot</b>\n\n"
             "I send you notifications when new data is added to your Google Sheets.\n\n"
@@ -63,6 +72,8 @@ async def telegram_webhook(
             "/start - Link your account\n"
             "/help - Show this help message",
         )
+        if not success:
+            logger.error("Failed to send /help reply to Telegram chat %s", chat_id)
 
     return {"ok": True}
 
@@ -86,7 +97,7 @@ async def setup_webhook(
     Set up the Telegram webhook (admin action).
     Only needs to be called once during deployment.
     """
-    webhook_url = f"{settings.BACKEND_URL}/api/telegram/webhook"
+    webhook_url = f"{settings.BACKEND_URL.rstrip('/')}/api/telegram/webhook"
     success = await set_telegram_webhook(webhook_url)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to set Telegram webhook")

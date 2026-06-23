@@ -4,12 +4,16 @@ Main entry point for the API server.
 """
 
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import engine, Base
+from services.telegram import set_telegram_webhook
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -17,6 +21,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan: create tables on startup."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    if settings.ENVIRONMENT.lower() != "development" and settings.BACKEND_URL:
+        webhook_url = f"{settings.BACKEND_URL.rstrip('/')}/api/telegram/webhook"
+        try:
+            await set_telegram_webhook(webhook_url)
+        except Exception:
+            logger.exception("Failed to auto-configure Telegram webhook: %s", webhook_url)
     yield
     await engine.dispose()
 

@@ -2,6 +2,7 @@
 Notification service — process webhook data, render templates, send notifications.
 """
 
+import html
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -12,6 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.subscription import SheetSubscription
 from models.notification import NotificationLog
 from services.telegram import send_telegram_message
+
+
+def _escape_telegram_html(value: Any) -> str:
+    return html.escape("") if value is None else html.escape(str(value))
 
 
 def render_notification_template(
@@ -30,20 +35,20 @@ def render_notification_template(
         message = template
         for key, value in row_data.items():
             placeholder = "{{" + key + "}}"
-            message = message.replace(placeholder, str(value) if value is not None else "")
+            message = message.replace(placeholder, _escape_telegram_html(value))
         # Clean up any remaining placeholders
         message = re.sub(r"\{\{[^}]+\}\}", "", message)
         return message
 
     # Default template
     lines = [
-        f"📊 <b>New data in {spreadsheet_name}</b>",
-        f"📋 Sheet: {sheet_name} | Row #{row_number}",
+        f"📊 <b>New data in {_escape_telegram_html(spreadsheet_name)}</b>",
+        f"📋 Sheet: {_escape_telegram_html(sheet_name)} | Row #{row_number}",
         "─" * 25,
     ]
     for key, value in row_data.items():
         if value is not None and str(value).strip():
-            lines.append(f"• <b>{key}</b>: {value}")
+            lines.append(f"• <b>{_escape_telegram_html(key)}</b>: {_escape_telegram_html(value)}")
     lines.append(f"\n🕐 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
 
     return "\n".join(lines)
@@ -70,12 +75,6 @@ async def process_webhook_data(
 
     if subscription is None:
         return {"status": "error", "message": "Invalid or inactive webhook secret"}
-
-    # Load the user
-    user_result = await db.execute(
-        select(SheetSubscription)
-        .where(SheetSubscription.id == subscription.id)
-    )
 
     from models.user import User
     user_result = await db.execute(
