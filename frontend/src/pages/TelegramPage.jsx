@@ -115,7 +115,10 @@ export default function TelegramPage() {
                     /start {user?.telegram_link_token}
                   </code>
                   <button 
-                    onClick={handleCopyLink} 
+                    onClick={() => {
+                      navigator.clipboard.writeText('/start ' + user?.telegram_link_token);
+                      toast.success('Command copied to clipboard');
+                    }} 
                     className="p-2 hover:bg-dark-600 rounded-md text-gray-400 transition-colors"
                   >
                     <FiCopy className="w-4 h-4" />

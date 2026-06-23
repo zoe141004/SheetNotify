@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { FiTrash2, FiCode, FiToggleLeft, FiToggleRight, FiPlus } from 'react-icons/fi';
+import { FiTrash2, FiCode, FiToggleLeft, FiToggleRight, FiPlus, FiCopy } from 'react-icons/fi';
 
 export default function SheetsPage() {
   const [subscriptions, setSubscriptions] = useState([]);
