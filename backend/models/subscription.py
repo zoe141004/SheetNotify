@@ -1,7 +1,8 @@
 """
 SheetSubscription model — tracks which sheets a user is monitoring.
 """
-
+import secrets
+from sqlalchemy import Column, String
 import uuid
 from datetime import datetime, timezone
 
@@ -33,10 +34,10 @@ class SheetSubscription(Base):
     sheet_name: Mapped[str] = mapped_column(String(255), nullable=False)
     sheet_gid: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
-    webhook_secret: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-        server_default=text("encode(gen_random_bytes(32), 'hex')"),
+    webhook_secret = Column(
+        String(255), 
+        nullable=False, 
+        default=lambda: secrets.token_hex(32),
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
