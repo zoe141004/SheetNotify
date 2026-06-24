@@ -34,7 +34,7 @@ from models.notification import NotificationLog
 from models.subscription import SheetSubscription
 from models.user import User
 from services.change_detector import detect_changes, snapshot_rows
-from services.notification import format_polling_notification
+from services.notification import describe_change, format_changes_message
 from services.sheets import get_sheet_snapshot, get_spreadsheet_snapshots
 from services.telegram import send_telegram_message
 
@@ -148,10 +148,12 @@ async def process_subscription_changes(
         )
         if is_baseline:
             continue
-        previous_rows = (
-            previous_state.get("sheets", {}).get(snapshot.sheet_name, {}).get("rows", [])
-        )
-        for change in detect_changes(previous_rows, snapshot.rows, snapshot.headers):
+        previous_sheet = previous_state.get("sheets", {}).get(snapshot.sheet_name, {})
+        previous_rows = previous_sheet.get("rows", [])
+        previous_headers = previous_sheet.get("headers")
+        for change in detect_changes(
+            previous_rows, snapshot.rows, snapshot.headers, previous_headers
+        ):
             all_changes.append((snapshot, change))
 
     # First time we ever see this subscription: store a baseline silently.
@@ -166,29 +168,32 @@ async def process_subscription_changes(
     telegram_linked = user.telegram_chat_id is not None
     sent_count = 0
 
+    # Group changes by sheet, then send exactly ONE consolidated message for the
+    # whole cycle (never split into multiple Telegram messages).
+    groups: dict[str, tuple[Any, list[Any]]] = {}
     for snapshot, change in all_changes:
-        message = format_polling_notification(
-            spreadsheet_name=snapshot.spreadsheet_name,
-            sheet_name=snapshot.sheet_name,
-            change_type=change.change_type,
-            row_number=change.row_number,
-            changed_columns=change.changed_columns,
-            before_data=change.before,
-            after_data=change.after,
-            cell_reference=change.cell_reference,
-        )
-
-        if telegram_linked:
-            success = await send_telegram_message(user.telegram_chat_id, message)
-            status = "sent" if success else "failed"
-            error_message = None if success else "Failed to send Telegram message"
-            sent_at = now if success else None
-            if success:
-                sent_count += 1
+        entry = groups.get(snapshot.sheet_name)
+        if entry is None:
+            groups[snapshot.sheet_name] = (snapshot, [change])
         else:
-            status = "skipped"
-            error_message = "Telegram not linked"
-            sent_at = None
+            entry[1].append(change)
+
+    message_sent = False
+    if telegram_linked:
+        message = format_changes_message(groups)
+        message_sent = await send_telegram_message(user.telegram_chat_id, message)
+        if message_sent:
+            sent_count = 1
+
+    # Persist one log row per change (full history) with a precise description.
+    for snapshot, change in all_changes:
+        description = describe_change(change)
+        if not telegram_linked:
+            status, error_message, sent_at = "skipped", "Telegram not linked", None
+        elif message_sent:
+            status, error_message, sent_at = "sent", None, now
+        else:
+            status, error_message, sent_at = "failed", "Failed to send Telegram message", None
 
         session.add(
             NotificationLog(
@@ -205,7 +210,7 @@ async def process_subscription_changes(
                 cell_reference=change.cell_reference,
                 change_type=change.change_type,
                 detection_method=detection_method,
-                telegram_message=message,
+                telegram_message=description,
                 status=status,
                 error_message=error_message,
                 sent_at=sent_at,
