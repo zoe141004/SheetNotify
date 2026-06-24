@@ -8,5 +8,6 @@ dist/
 coverage/
 backend/alembic.ini
 
-"Sheetnotify system prompt.md"
-.env.example
+# Internal spec / status notes — not part of the public app
+Sheetnotify system prompt.md
+SYSTEM_STATUS.md
