@@ -66,7 +66,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-@app.get("google1dc6bc0faf4c2840.html", response_class=PlainTextResponse)
+@app.get("/google1dc6bc0faf4c2840.html", response_class=PlainTextResponse)
 async def google_verification():
     # Nội dung trả về chính là dòng chữ bên trong file Google yêu cầu
     return "google-site-verification: google1dc6bc0faf4c2840.html"
