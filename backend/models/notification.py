@@ -38,6 +38,12 @@ class NotificationLog(Base):
     sheet_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     row_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    before_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
+    after_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
+    changed_columns: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, default=None)
+    cell_reference: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    change_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    detection_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     telegram_message: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(

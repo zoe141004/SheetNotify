@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import String, Boolean, Integer, ForeignKey, UniqueConstraint, DateTime, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -45,6 +45,28 @@ class SheetSubscription(Base):
         Boolean, default=False, server_default=text("FALSE")
     )
     last_known_row: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    polling_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("TRUE")
+    )
+    polling_interval_minutes: Mapped[int] = mapped_column(
+        Integer, default=1, server_default=text("1")
+    )
+    track_all_sheets: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("FALSE")
+    )
+    monitored_sheet_names: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True, default=None
+    )
+    last_state_snapshot: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, default=None
+    )
+    last_polled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    last_poll_error: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    poll_failure_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
 
     notification_template: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 

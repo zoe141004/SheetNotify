@@ -17,6 +17,7 @@ from services.telegram import (
     send_telegram_message,
     set_telegram_webhook,
 )
+from services.runtime_urls import resolve_backend_url
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -91,13 +92,15 @@ async def get_link_url(
 
 @router.post("/setup-webhook")
 async def setup_webhook(
+    request: Request,
     current_user: User = Depends(get_current_user),
 ):
     """
     Set up the Telegram webhook (admin action).
     Only needs to be called once during deployment.
     """
-    webhook_url = f"{settings.BACKEND_URL.rstrip('/')}/api/telegram/webhook"
+    backend_url = resolve_backend_url(request)
+    webhook_url = f"{backend_url}/api/telegram/webhook"
     success = await set_telegram_webhook(webhook_url)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to set Telegram webhook")

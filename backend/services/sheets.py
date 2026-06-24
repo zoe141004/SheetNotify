@@ -3,7 +3,10 @@ Google Sheets service — list spreadsheets, get tabs, manage subscriptions.
 """
 
 import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select, delete
@@ -14,6 +17,17 @@ from models.user import User
 from models.subscription import SheetSubscription
 from schemas.subscription import SpreadsheetInfo, SheetTab
 from services.auth import get_valid_google_token
+
+
+@dataclass(slots=True)
+class SheetSnapshot:
+    spreadsheet_id: str
+    spreadsheet_name: str
+    sheet_name: str
+    sheet_gid: str | None
+    headers: list[str]
+    rows: list[dict[str, object]]
+    fetched_at: datetime
 
 
 async def list_user_spreadsheets(user: User, db: AsyncSession) -> list[SpreadsheetInfo]:
@@ -75,25 +89,159 @@ async def get_spreadsheet_tabs(
         ]
 
 
+async def get_spreadsheet_metadata(
+    user: User, db: AsyncSession, spreadsheet_id: str
+) -> dict[str, object]:
+    """Fetch spreadsheet metadata and available sheet tabs."""
+    access_token = await get_valid_google_token(user, db)
+    if not access_token:
+        return {}
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "includeGridData": False,
+                "fields": "spreadsheetId,properties.title,sheets.properties",
+            },
+        )
+        if response.status_code != 200:
+            return {}
+
+        return response.json()
+
+
+async def get_sheet_snapshot(
+    user: User,
+    db: AsyncSession,
+    spreadsheet_id: str,
+    sheet_name: str,
+) -> SheetSnapshot | None:
+    """Fetch a simplified snapshot for a single sheet/tab."""
+    access_token = await get_valid_google_token(user, db)
+    if not access_token:
+        return None
+
+    metadata = await get_spreadsheet_metadata(user, db, spreadsheet_id)
+    if not metadata:
+        return None
+
+    sheets = metadata.get("sheets", []) or []
+    target_sheet = next(
+        (
+            sheet.get("properties", {})
+            for sheet in sheets
+            if sheet.get("properties", {}).get("title") == sheet_name
+        ),
+        None,
+    )
+    if not target_sheet:
+        return None
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{quote(sheet_name, safe='')}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"majorDimension": "ROWS", "valueRenderOption": "FORMATTED_VALUE"},
+        )
+        if response.status_code != 200:
+            return None
+
+        values = response.json().get("values", []) or []
+        if not values:
+            return SheetSnapshot(
+                spreadsheet_id=spreadsheet_id,
+                spreadsheet_name=metadata.get("properties", {}).get("title", spreadsheet_id),
+                sheet_name=sheet_name,
+                sheet_gid=str(target_sheet.get("sheetId")) if target_sheet.get("sheetId") is not None else None,
+                headers=[],
+                rows=[],
+                fetched_at=datetime.now(timezone.utc),
+            )
+
+        headers = [
+            str(value).strip() if str(value).strip() else f"Column {index + 1}"
+            for index, value in enumerate(values[0])
+        ]
+        rows: list[dict[str, object]] = []
+        for row_index, row_values in enumerate(values[1:], start=2):
+            row_data: dict[str, object] = {"_row_number": row_index}
+            for index, header in enumerate(headers):
+                row_data[header] = row_values[index] if index < len(row_values) else None
+            rows.append(row_data)
+
+        return SheetSnapshot(
+            spreadsheet_id=spreadsheet_id,
+            spreadsheet_name=metadata.get("properties", {}).get("title", spreadsheet_id),
+            sheet_name=sheet_name,
+            sheet_gid=str(target_sheet.get("sheetId")) if target_sheet.get("sheetId") is not None else None,
+            headers=headers,
+            rows=rows,
+            fetched_at=datetime.now(timezone.utc),
+        )
+
+
+async def get_spreadsheet_snapshots(
+    user: User,
+    db: AsyncSession,
+    spreadsheet_id: str,
+    monitored_sheet_names: Optional[list[str]] = None,
+) -> list[SheetSnapshot]:
+    """Fetch snapshots for all or selected sheets in a spreadsheet."""
+    metadata = await get_spreadsheet_metadata(user, db, spreadsheet_id)
+    if not metadata:
+        return []
+
+    sheets = metadata.get("sheets", []) or []
+    sheet_names = [
+        sheet.get("properties", {}).get("title")
+        for sheet in sheets
+        if sheet.get("properties", {}).get("title")
+    ]
+    if monitored_sheet_names:
+        wanted = set(monitored_sheet_names)
+        sheet_names = [name for name in sheet_names if name in wanted]
+
+    snapshots: list[SheetSnapshot] = []
+    for sheet_name in sheet_names:
+        snapshot = await get_sheet_snapshot(user, db, spreadsheet_id, sheet_name)
+        if snapshot is not None:
+            snapshots.append(snapshot)
+    return snapshots
+
+
 async def create_subscription(
     db: AsyncSession,
     user: User,
     spreadsheet_id: str,
-    sheet_name: str,
+    sheet_name: Optional[str] = None,
     spreadsheet_name: Optional[str] = None,
     spreadsheet_url: Optional[str] = None,
     sheet_gid: Optional[str] = None,
     notification_template: Optional[str] = None,
+    polling_enabled: bool = True,
+    polling_interval_minutes: int = 1,
+    track_all_sheets: bool = False,
+    monitored_sheet_names: Optional[list[str]] = None,
 ) -> SheetSubscription:
     """Create a new sheet subscription for a user."""
+    stored_sheet_name = sheet_name or ("*" if track_all_sheets else "")
+    if not stored_sheet_name:
+        raise ValueError("sheet_name is required unless track_all_sheets is enabled")
+
     subscription = SheetSubscription(
         user_id=user.id,
         spreadsheet_id=spreadsheet_id,
         spreadsheet_name=spreadsheet_name,
         spreadsheet_url=spreadsheet_url,
-        sheet_name=sheet_name,
+        sheet_name=stored_sheet_name,
         sheet_gid=sheet_gid,
         notification_template=notification_template,
+        polling_enabled=polling_enabled,
+        polling_interval_minutes=polling_interval_minutes,
+        track_all_sheets=track_all_sheets,
+        monitored_sheet_names=monitored_sheet_names,
     )
     db.add(subscription)
     await db.flush()

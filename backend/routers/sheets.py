@@ -4,10 +4,9 @@ Google Sheets router — list sheets, manage subscriptions, get Apps Script.
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
 from database import get_db
 from middleware.auth import get_current_user
 from models.user import User
@@ -27,6 +26,7 @@ from services.sheets import (
     get_user_subscriptions,
     list_user_spreadsheets,
 )
+from services.runtime_urls import resolve_backend_url
 
 router = APIRouter()
 
@@ -58,6 +58,11 @@ async def subscribe_to_sheet(
 ):
     """Create a new sheet subscription."""
     try:
+        if not data.track_all_sheets and not data.sheet_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="sheet_name is required unless track_all_sheets is enabled",
+            )
         subscription = await create_subscription(
             db=db,
             user=current_user,
@@ -67,6 +72,10 @@ async def subscribe_to_sheet(
             spreadsheet_url=data.spreadsheet_url,
             sheet_gid=data.sheet_gid,
             notification_template=data.notification_template,
+            polling_enabled=data.polling_enabled,
+            polling_interval_minutes=data.polling_interval_minutes,
+            track_all_sheets=data.track_all_sheets,
+            monitored_sheet_names=data.monitored_sheet_names,
         )
         return subscription
     except Exception as e:
@@ -138,6 +147,7 @@ async def remove_subscription(
 
 @router.get("/subscriptions/{subscription_id}/script")
 async def get_script(
+    request: Request,
     subscription_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -146,8 +156,14 @@ async def get_script(
     sub = await get_subscription_by_id(db, subscription_id, current_user.id)
     if sub is None:
         raise HTTPException(status_code=404, detail="Subscription not found")
+    if sub.track_all_sheets:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Apps Script setup is only available for sheet-specific subscriptions",
+        )
 
-    webhook_url = f"{settings.BACKEND_URL}/api/webhook/{sub.webhook_secret}"
+    backend_url = resolve_backend_url(request)
+    webhook_url = f"{backend_url}/api/webhook/{sub.webhook_secret}"
     script = generate_apps_script(
         webhook_url=webhook_url,
         webhook_secret=sub.webhook_secret,

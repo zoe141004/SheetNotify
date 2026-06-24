@@ -18,6 +18,12 @@ class NotificationLogResponse(BaseModel):
     sheet_name: Optional[str] = None
     row_number: Optional[int] = None
     row_data: dict[str, Any]
+    before_data: Optional[dict[str, Any]] = None
+    after_data: Optional[dict[str, Any]] = None
+    changed_columns: Optional[list[str]] = None
+    cell_reference: Optional[str] = None
+    change_type: Optional[str] = None
+    detection_method: Optional[str] = None
     telegram_message: Optional[str] = None
     status: str
     error_message: Optional[str] = None

@@ -5,13 +5,17 @@ Main entry point for the API server.
 
 from contextlib import asynccontextmanager
 import logging
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import engine, Base
+from services.schema_sync import ensure_polling_schema
+from services.poller import run_polling_loop
 from services.telegram import set_telegram_webhook
+from services.runtime_urls import resolve_backend_url
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +26,28 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    if settings.ENVIRONMENT.lower() != "development" and settings.BACKEND_URL:
-        webhook_url = f"{settings.BACKEND_URL.rstrip('/')}/api/telegram/webhook"
+    await ensure_polling_schema(engine)
+
+    if settings.ENVIRONMENT.lower() != "development":
         try:
+            backend_url = resolve_backend_url()
+            webhook_url = f"{backend_url}/api/telegram/webhook"
             await set_telegram_webhook(webhook_url)
         except Exception:
-            logger.exception("Failed to auto-configure Telegram webhook: %s", webhook_url)
+            logger.exception("Failed to auto-configure Telegram webhook")
+
+    polling_task = None
+    if settings.ENVIRONMENT.lower() != "development":
+        polling_task = asyncio.create_task(run_polling_loop(60))
+
     yield
+
+    if polling_task is not None:
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
     await engine.dispose()
 
 
