@@ -9,6 +9,7 @@ import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from config import settings
 from database import engine, Base
@@ -92,3 +93,8 @@ async def root():
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {"status": "healthy"}
+
+@app.get("google1dc6bc0faf4c2840.html", response_class=PlainTextResponse)
+async def google_verification():
+    # Nội dung trả về chính là dòng chữ bên trong file Google yêu cầu
+    return "google-site-verification: google1dc6bc0faf4c2840.html"
