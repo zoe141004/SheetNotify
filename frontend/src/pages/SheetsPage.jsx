@@ -88,21 +88,25 @@ export default function SheetsPage() {
                 </div>
                 <div className="text-sm text-gray-400 flex items-center gap-2">
                   <span className="bg-dark-600 px-2 py-0.5 rounded text-xs font-medium border border-dark-400/50">
-                    Tab: {sub.sheet_name}
+                    Scope: {sub.track_all_sheets ? 'Entire spreadsheet' : `Tab: ${sub.sheet_name}`}
                   </span>
                   <span>•</span>
                   <span>Last row: {sub.last_known_row}</span>
+                  <span>•</span>
+                  <span>Polling: {sub.polling_enabled ? `${sub.polling_interval_minutes || 1} min` : 'Off'}</span>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => setShowScriptModal(sub.id)}
-                  title="View Apps Script"
-                  className="p-2.5 rounded-lg bg-dark-600 border border-dark-400/50 text-gray-200 hover:text-white hover:bg-primary-600 transition-colors"
-                >
-                  <FiCode className="w-5 h-5" />
-                </button>
+                {!sub.track_all_sheets && (
+                  <button 
+                    onClick={() => setShowScriptModal(sub.id)}
+                    title="View Apps Script"
+                    className="p-2.5 rounded-lg bg-dark-600 border border-dark-400/50 text-gray-200 hover:text-white hover:bg-primary-600 transition-colors"
+                  >
+                    <FiCode className="w-5 h-5" />
+                  </button>
+                )}
                 <button 
                   onClick={() => toggleActive(sub)}
                   title={sub.is_active ? "Pause" : "Activate"}
@@ -139,6 +143,7 @@ function AddSheetModal({ onClose, onAdded }) {
   
   const [selectedSheet, setSelectedSheet] = useState('');
   const [selectedTab, setSelectedTab] = useState('');
+  const [trackAllSheets, setTrackAllSheets] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -171,7 +176,8 @@ function AddSheetModal({ onClose, onAdded }) {
   };
 
   const handleSave = async () => {
-    if (!selectedSheet || !selectedTab) return toast.error('Please select a sheet and tab');
+    if (!selectedSheet) return toast.error('Please select a spreadsheet');
+    if (!trackAllSheets && !selectedTab) return toast.error('Please select a tab or choose entire spreadsheet');
     
     setSubmitting(true);
     try {
@@ -180,7 +186,10 @@ function AddSheetModal({ onClose, onAdded }) {
         spreadsheet_id: selectedSheet,
         spreadsheet_name: sheetDetail?.name,
         spreadsheet_url: sheetDetail?.url,
-        sheet_name: selectedTab
+        sheet_name: trackAllSheets ? undefined : selectedTab,
+        polling_enabled: true,
+        polling_interval_minutes: 1,
+        track_all_sheets: trackAllSheets,
       });
       toast.success('Subscription created!');
       onAdded();
@@ -211,7 +220,7 @@ function AddSheetModal({ onClose, onAdded }) {
             
             <div>
               <label className="block text-sm font-medium mb-1">Select Tab</label>
-              <select className="input-field w-full" value={selectedTab} onChange={e => setSelectedTab(e.target.value)} disabled={!selectedSheet || tabs.length === 0}>
+              <select className="input-field w-full" value={selectedTab} onChange={e => setSelectedTab(e.target.value)} disabled={!selectedSheet || tabs.length === 0 || trackAllSheets}>
                 <option value="">-- Choose a tab --</option>
                 {tabs.map(t => (
                   <option key={t.index} value={t.title}>{t.title}</option>
@@ -219,9 +228,19 @@ function AddSheetModal({ onClose, onAdded }) {
               </select>
             </div>
 
+            <label className="flex items-center gap-3 text-sm text-gray-300">
+              <input
+                type="checkbox"
+                checked={trackAllSheets}
+                onChange={(e) => setTrackAllSheets(e.target.checked)}
+                className="h-4 w-4 rounded border-dark-400 bg-dark-700 text-primary-500"
+              />
+              Track entire spreadsheet (all tabs) with polling every 1 minute
+            </label>
+
             <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-dark-400/30">
               <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white transition-colors">Cancel</button>
-              <button onClick={handleSave} disabled={submitting || !selectedTab} className="btn-primary py-2">
+              <button onClick={handleSave} disabled={submitting || !selectedSheet || (!trackAllSheets && !selectedTab)} className="btn-primary py-2">
                 {submitting ? 'Saving...' : 'Subscribe'}
               </button>
             </div>
