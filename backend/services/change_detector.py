@@ -1,11 +1,19 @@
 """
-Change detection helpers for polling-based sheet monitoring.
+Change detection helpers for snapshot-based sheet monitoring.
+
+The detector compares two snapshots of a sheet (the previously stored snapshot
+and the freshly fetched one) and classifies every difference as an insert,
+update, or delete. Matching is content-based (via a stable per-row hash) so that
+inserting or deleting a row in the *middle* of a sheet does not cascade into a
+flood of false "update" notifications — the rows that merely shifted position
+are recognised as unchanged because their content hash still matches.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,9 +36,17 @@ class RowChange:
 
 
 def _stable_row_hash(row: dict[str, Any], headers: list[str]) -> str:
+    """Hash a row's *content* (ignoring its position/row number)."""
     payload = {header: row.get(header) for header in headers}
     serialized = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _row_number_of(row: dict[str, Any], fallback: int) -> int:
+    try:
+        return int(row.get("_row_number", fallback))
+    except (TypeError, ValueError):
+        return fallback
 
 
 def detect_changes(
@@ -38,78 +54,122 @@ def detect_changes(
     current_rows: list[dict[str, Any]],
     headers: list[str],
 ) -> list[RowChange]:
-    """Detect row-level inserts, updates, and deletions between two snapshots."""
+    """Detect row-level inserts, updates, and deletions between two snapshots.
+
+    Algorithm:
+      1. Match rows whose *content* is identical (same hash). These are treated
+         as unchanged even if their row number moved (e.g. a row was inserted
+         above them). When several rows share the same hash we pair them up by
+         closest row number to stay stable.
+      2. Remaining current rows that share a row number with a remaining
+         previous row → UPDATE (compute exactly which columns changed).
+      3. Remaining current rows with no previous counterpart → INSERT.
+      4. Remaining previous rows with no current counterpart → DELETE.
+    """
     previous_rows = previous_rows or []
-    previous_by_key: dict[int, dict[str, Any]] = {
-        int(row.get("_row_number", index + 2)): row
+
+    prev = [
+        (_row_number_of(row, index + 2), row, _stable_row_hash(row, headers))
         for index, row in enumerate(previous_rows)
-    }
-    current_by_key: dict[int, dict[str, Any]] = {
-        int(row.get("_row_number", index + 2)): row
+    ]
+    curr = [
+        (_row_number_of(row, index + 2), row, _stable_row_hash(row, headers))
         for index, row in enumerate(current_rows)
+    ]
+
+    # ── Step 1: match identical-content rows ──
+    prev_by_hash: dict[str, list[int]] = defaultdict(list)
+    for index, (_, _, row_hash) in enumerate(prev):
+        prev_by_hash[row_hash].append(index)
+
+    prev_matched: set[int] = set()
+    curr_matched: set[int] = set()
+
+    for curr_index, (curr_number, _, curr_hash) in enumerate(curr):
+        candidates = prev_by_hash.get(curr_hash)
+        if not candidates:
+            continue
+        best_index: int | None = None
+        for prev_index in candidates:
+            if prev_index in prev_matched:
+                continue
+            if best_index is None or abs(prev[prev_index][0] - curr_number) < abs(
+                prev[best_index][0] - curr_number
+            ):
+                best_index = prev_index
+        if best_index is not None:
+            prev_matched.add(best_index)
+            curr_matched.add(curr_index)
+
+    remaining_prev = [prev[i] for i in range(len(prev)) if i not in prev_matched]
+    remaining_curr = [curr[i] for i in range(len(curr)) if i not in curr_matched]
+
+    # ── Steps 2 & 3: updates and inserts ──
+    remaining_prev_by_number: dict[int, tuple[int, dict[str, Any], str]] = {
+        item[0]: item for item in remaining_prev
     }
-
+    consumed_prev_numbers: set[int] = set()
     changes: list[RowChange] = []
-    all_row_numbers = sorted(set(previous_by_key) | set(current_by_key))
 
-    for row_number in all_row_numbers:
-        before_row = previous_by_key.get(row_number)
-        after_row = current_by_key.get(row_number)
-
-        if before_row is None and after_row is not None:
+    for curr_number, curr_row, _ in remaining_curr:
+        prev_item = remaining_prev_by_number.get(curr_number)
+        if prev_item is not None and curr_number not in consumed_prev_numbers:
+            _, prev_row, _ = prev_item
+            consumed_prev_numbers.add(curr_number)
+            changed_columns = [
+                header
+                for header in headers
+                if prev_row.get(header) != curr_row.get(header)
+            ]
+            if changed_columns:
+                cell_reference = (
+                    f"{changed_columns[0]}{curr_number}"
+                    if len(changed_columns) == 1
+                    else None
+                )
+                changes.append(
+                    RowChange(
+                        change_type="update",
+                        row_number=curr_number,
+                        before=prev_row,
+                        after=curr_row,
+                        changed_columns=changed_columns,
+                        cell_reference=cell_reference,
+                    )
+                )
+        else:
             changes.append(
                 RowChange(
                     change_type="insert",
-                    row_number=row_number,
+                    row_number=curr_number,
                     before=None,
-                    after=after_row,
-                    changed_columns=headers,
-                )
-            )
-            continue
-
-        if before_row is not None and after_row is None:
-            changes.append(
-                RowChange(
-                    change_type="delete",
-                    row_number=row_number,
-                    before=before_row,
-                    after=None,
-                    changed_columns=headers,
-                )
-            )
-            continue
-
-        if before_row is None or after_row is None:
-            continue
-
-        changed_columns: list[str] = []
-        for header in headers:
-            if before_row.get(header) != after_row.get(header):
-                changed_columns.append(header)
-
-        if changed_columns:
-            cell_reference = f"{changed_columns[0]}{row_number}" if len(changed_columns) == 1 else None
-            changes.append(
-                RowChange(
-                    change_type="update",
-                    row_number=row_number,
-                    before=before_row,
-                    after=after_row,
-                    changed_columns=changed_columns,
-                    cell_reference=cell_reference,
+                    after=curr_row,
+                    changed_columns=list(headers),
                 )
             )
 
+    # ── Step 4: deletes ──
+    for prev_number, prev_row, _ in remaining_prev:
+        if prev_number in consumed_prev_numbers:
+            continue
+        changes.append(
+            RowChange(
+                change_type="delete",
+                row_number=prev_number,
+                before=prev_row,
+                after=None,
+                changed_columns=list(headers),
+            )
+        )
+
+    changes.sort(key=lambda change: change.row_number)
     return changes
 
 
 def snapshot_rows(rows: list[dict[str, Any]], headers: list[str]) -> dict[str, Any]:
+    """Build the persisted snapshot payload for a single sheet."""
     return {
         "headers": headers,
         "rows": rows,
-        "row_hashes": [
-            _stable_row_hash(row, headers)
-            for row in rows
-        ],
+        "row_hashes": [_stable_row_hash(row, headers) for row in rows],
     }

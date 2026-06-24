@@ -151,7 +151,7 @@ function AddSheetModal({ onClose, onAdded }) {
       setSpreadsheets(res.data);
       setLoading(false);
     }).catch(err => {
-      toast.error('Failed to load Google Sheets. Plase ensure Drive API is enabled.');
+      toast.error('Failed to load Google Sheets. Please ensure Drive API is enabled.');
       setLoading(false);
     });
   }, []);

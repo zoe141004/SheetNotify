@@ -27,6 +27,7 @@ from services.sheets import (
     list_user_spreadsheets,
 )
 from services.runtime_urls import resolve_backend_url
+from services.drive_watch import ensure_channel, cleanup_spreadsheet_channel_if_unused
 
 router = APIRouter()
 
@@ -53,6 +54,7 @@ async def get_tabs(
 @router.post("/subscribe", response_model=SubscriptionResponse, status_code=201)
 async def subscribe_to_sheet(
     data: SubscriptionCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -77,7 +79,13 @@ async def subscribe_to_sheet(
             track_all_sheets=data.track_all_sheets,
             monitored_sheet_names=data.monitored_sheet_names,
         )
+        # Best-effort: register a near real-time Drive watch (no-op unless
+        # ENABLE_DRIVE_WEBHOOK and a public domain are configured). Polling
+        # remains the safety net regardless.
+        await ensure_channel(db, current_user, data.spreadsheet_id, request)
         return subscription
+    except HTTPException:
+        raise
     except Exception as e:
         if "uq_user_sheet" in str(e):
             raise HTTPException(
@@ -127,6 +135,14 @@ async def update_subscription(
         sub.notification_template = data.notification_template
     if data.script_installed is not None:
         sub.script_installed = data.script_installed
+    if data.polling_enabled is not None:
+        sub.polling_enabled = data.polling_enabled
+    if data.polling_interval_minutes is not None:
+        sub.polling_interval_minutes = max(int(data.polling_interval_minutes), 1)
+    if data.track_all_sheets is not None:
+        sub.track_all_sheets = data.track_all_sheets
+    if data.monitored_sheet_names is not None:
+        sub.monitored_sheet_names = data.monitored_sheet_names
 
     await db.flush()
     await db.refresh(sub)
@@ -140,9 +156,17 @@ async def remove_subscription(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a subscription."""
+    sub = await get_subscription_by_id(db, subscription_id, current_user.id)
+    if sub is None:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    spreadsheet_id = sub.spreadsheet_id
+
     deleted = await delete_subscription(db, subscription_id, current_user.id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Subscription not found")
+
+    # Stop the Drive watch if this was the last subscription on the spreadsheet.
+    await cleanup_spreadsheet_channel_if_unused(db, current_user, spreadsheet_id)
 
 
 @router.get("/subscriptions/{subscription_id}/script")
