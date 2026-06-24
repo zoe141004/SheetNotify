@@ -35,11 +35,30 @@ class RowChange:
     cell_reference: str | None = None
 
 
+def _normalize(value: Any) -> str:
+    """Collapse blank-ish values so they compare equal.
+
+    None, "", and whitespace-only all become "" — so a cell going from null to
+    an empty string (or vice versa) is NOT treated as a change. Other values are
+    trimmed of surrounding whitespace.
+    """
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def _stable_row_hash(row: dict[str, Any], headers: list[str]) -> str:
-    """Hash a row's *content* (ignoring its position/row number)."""
-    payload = {header: row.get(header) for header in headers}
-    serialized = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    """Hash a row's *normalized* content (ignoring position and blank/whitespace noise)."""
+    payload = {header: _normalize(row.get(header)) for header in headers}
+    serialized = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _row_is_empty(row: dict[str, Any] | None, headers: list[str]) -> bool:
+    """True if every tracked cell of the row is blank/whitespace."""
+    if not row:
+        return True
+    return all(_normalize(row.get(header)) == "" for header in headers)
 
 
 def _row_number_of(row: dict[str, Any], fallback: int) -> int:
@@ -116,10 +135,11 @@ def detect_changes(
         if prev_item is not None and curr_number not in consumed_prev_numbers:
             _, prev_row, _ = prev_item
             consumed_prev_numbers.add(curr_number)
+            # Compare normalized values so null<->"" / whitespace edits are ignored.
             changed_columns = [
                 header
                 for header in headers
-                if prev_row.get(header) != curr_row.get(header)
+                if _normalize(prev_row.get(header)) != _normalize(curr_row.get(header))
             ]
             if changed_columns:
                 cell_reference = (
@@ -138,6 +158,10 @@ def detect_changes(
                     )
                 )
         else:
+            # Skip brand-new rows that carry no actual content (blank rows added
+            # when extending a table, etc.) — nothing meaningful to report.
+            if _row_is_empty(curr_row, headers):
+                continue
             changes.append(
                 RowChange(
                     change_type="insert",
@@ -151,6 +175,9 @@ def detect_changes(
     # ── Step 4: deletes ──
     for prev_number, prev_row, _ in remaining_prev:
         if prev_number in consumed_prev_numbers:
+            continue
+        # Don't announce the removal of a row that never had content.
+        if _row_is_empty(prev_row, headers):
             continue
         changes.append(
             RowChange(

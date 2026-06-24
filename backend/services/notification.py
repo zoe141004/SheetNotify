@@ -69,3 +69,83 @@ def format_polling_notification(
 
     lines.append(f"\n🕐 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     return "\n".join(lines)
+
+
+def _non_blank_pairs(row: Optional[dict[str, Any]], limit: int = 3) -> str:
+    """Compact 'k=v' summary of a row's non-blank cells (excluding row marker)."""
+    if not row:
+        return ""
+    parts = []
+    for key, value in row.items():
+        if key == "_row_number":
+            continue
+        if value is not None and str(value).strip():
+            parts.append(f"{_escape_telegram_html(key)}={_escape_telegram_html(value)}")
+        if len(parts) >= limit:
+            break
+    return ", ".join(parts)
+
+
+def _compact_change_line(change: Any) -> str:
+    """One short line describing a single change, for batched summaries."""
+    row_number = change.row_number
+    if change.change_type == "insert":
+        summary = _non_blank_pairs(change.after) or "(no content)"
+        return f"🟢 #{row_number}: {summary}"
+    if change.change_type == "delete":
+        summary = _non_blank_pairs(change.before) or "(empty)"
+        return f"🗑️ #{row_number}: {summary}"
+    # update
+    cols = change.changed_columns or []
+    if len(cols) == 1 and change.before is not None and change.after is not None:
+        col = cols[0]
+        before = _escape_telegram_html(change.before.get(col))
+        after = _escape_telegram_html(change.after.get(col))
+        ref = change.cell_reference or f"#{row_number}"
+        return f"📝 {_escape_telegram_html(ref)}: {before} → {after}"
+    return f"📝 #{row_number}: {_escape_telegram_html(', '.join(cols))} updated"
+
+
+def format_batched_notification(
+    spreadsheet_name: str,
+    sheet_name: str,
+    changes: list[Any],
+    max_detail: int = 8,
+    max_chars: int = 3500,
+) -> str:
+    """Summarize many changes from one detection cycle into a single message."""
+    inserts = sum(1 for c in changes if c.change_type == "insert")
+    updates = sum(1 for c in changes if c.change_type == "update")
+    deletes = sum(1 for c in changes if c.change_type == "delete")
+
+    lines = [
+        f"📊 <b>{len(changes)} changes</b> in {_escape_telegram_html(spreadsheet_name)} / {_escape_telegram_html(sheet_name)}",
+    ]
+    summary_bits = []
+    if inserts:
+        summary_bits.append(f"🟢 {inserts} added")
+    if updates:
+        summary_bits.append(f"📝 {updates} updated")
+    if deletes:
+        summary_bits.append(f"🗑️ {deletes} deleted")
+    if summary_bits:
+        lines.append(" · ".join(summary_bits))
+
+    lines.append("")
+    shown = 0
+    for change in changes:
+        if shown >= max_detail:
+            break
+        line = _compact_change_line(change)
+        # Stop early if we are about to overflow Telegram's message limit.
+        if sum(len(x) for x in lines) + len(line) > max_chars:
+            break
+        lines.append(line)
+        shown += 1
+
+    remaining = len(changes) - shown
+    if remaining > 0:
+        lines.append(f"… and {remaining} more change(s)")
+
+    lines.append(f"\n🕐 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    return "\n".join(lines)

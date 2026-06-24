@@ -30,11 +30,12 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.notification import NotificationLog
 from models.subscription import SheetSubscription
 from models.user import User
 from services.change_detector import detect_changes, snapshot_rows
-from services.notification import format_polling_notification
+from services.notification import format_batched_notification, format_polling_notification
 from services.sheets import get_sheet_snapshot, get_spreadsheet_snapshots
 from services.telegram import send_telegram_message
 
@@ -166,51 +167,76 @@ async def process_subscription_changes(
     telegram_linked = user.telegram_chat_id is not None
     sent_count = 0
 
+    # Group changes by sheet so each sheet produces one focused notification.
+    # When a single cycle yields many changes (e.g. pasting 1000 rows), send one
+    # batched summary instead of flooding the chat with a message per row.
+    groups: dict[str, tuple[Any, list[Any]]] = {}
     for snapshot, change in all_changes:
-        message = format_polling_notification(
-            spreadsheet_name=snapshot.spreadsheet_name,
-            sheet_name=snapshot.sheet_name,
-            change_type=change.change_type,
-            row_number=change.row_number,
-            changed_columns=change.changed_columns,
-            before_data=change.before,
-            after_data=change.after,
-            cell_reference=change.cell_reference,
-        )
-
-        if telegram_linked:
-            success = await send_telegram_message(user.telegram_chat_id, message)
-            status = "sent" if success else "failed"
-            error_message = None if success else "Failed to send Telegram message"
-            sent_at = now if success else None
-            if success:
-                sent_count += 1
+        entry = groups.get(snapshot.sheet_name)
+        if entry is None:
+            groups[snapshot.sheet_name] = (snapshot, [change])
         else:
-            status = "skipped"
-            error_message = "Telegram not linked"
-            sent_at = None
+            entry[1].append(change)
 
-        session.add(
-            NotificationLog(
-                user_id=user.id,
-                subscription_id=subscription.id,
-                spreadsheet_id=snapshot.spreadsheet_id,
+    for snapshot, changes in groups.values():
+        batched = len(changes) > settings.NOTIFY_INDIVIDUAL_MAX
+        group_sent = False
+
+        if telegram_linked and batched:
+            batch_message = format_batched_notification(
+                snapshot.spreadsheet_name, snapshot.sheet_name, changes
+            )
+            group_sent = await send_telegram_message(user.telegram_chat_id, batch_message)
+            if group_sent:
+                sent_count += 1
+
+        for change in changes:
+            per_message = format_polling_notification(
                 spreadsheet_name=snapshot.spreadsheet_name,
                 sheet_name=snapshot.sheet_name,
+                change_type=change.change_type,
                 row_number=change.row_number,
-                row_data=change.after or change.before or {},
+                changed_columns=change.changed_columns,
                 before_data=change.before,
                 after_data=change.after,
-                changed_columns=change.changed_columns,
                 cell_reference=change.cell_reference,
-                change_type=change.change_type,
-                detection_method=detection_method,
-                telegram_message=message,
-                status=status,
-                error_message=error_message,
-                sent_at=sent_at,
             )
-        )
+
+            if not telegram_linked:
+                status, error_message, sent_at = "skipped", "Telegram not linked", None
+            elif batched:
+                status = "sent" if group_sent else "failed"
+                error_message = None if group_sent else "Failed to send Telegram batch"
+                sent_at = now if group_sent else None
+            else:
+                ok = await send_telegram_message(user.telegram_chat_id, per_message)
+                status = "sent" if ok else "failed"
+                error_message = None if ok else "Failed to send Telegram message"
+                sent_at = now if ok else None
+                if ok:
+                    sent_count += 1
+
+            session.add(
+                NotificationLog(
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    spreadsheet_id=snapshot.spreadsheet_id,
+                    spreadsheet_name=snapshot.spreadsheet_name,
+                    sheet_name=snapshot.sheet_name,
+                    row_number=change.row_number,
+                    row_data=change.after or change.before or {},
+                    before_data=change.before,
+                    after_data=change.after,
+                    changed_columns=change.changed_columns,
+                    cell_reference=change.cell_reference,
+                    change_type=change.change_type,
+                    detection_method=detection_method,
+                    telegram_message=per_message,
+                    status=status,
+                    error_message=error_message,
+                    sent_at=sent_at,
+                )
+            )
 
     subscription.last_state_snapshot = current_state
     subscription.last_polled_at = now

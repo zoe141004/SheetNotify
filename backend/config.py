@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     ENABLE_POLLING: bool = True
     POLLING_CYCLE_SECONDS: int = 60
 
+    # If one detection cycle produces more than this many changes, send a single
+    # batched summary instead of one Telegram message per change.
+    NOTIFY_INDIVIDUAL_MAX: int = 5
+
     # Google Drive push notifications (near real-time trigger).
     # Requires BACKEND_URL to be a PUBLIC, domain-verified HTTPS URL
     # (a *.run.app URL cannot be verified — use a custom domain).
