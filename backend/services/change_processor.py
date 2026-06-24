@@ -148,10 +148,12 @@ async def process_subscription_changes(
         )
         if is_baseline:
             continue
-        previous_rows = (
-            previous_state.get("sheets", {}).get(snapshot.sheet_name, {}).get("rows", [])
-        )
-        for change in detect_changes(previous_rows, snapshot.rows, snapshot.headers):
+        previous_sheet = previous_state.get("sheets", {}).get(snapshot.sheet_name, {})
+        previous_rows = previous_sheet.get("rows", [])
+        previous_headers = previous_sheet.get("headers")
+        for change in detect_changes(
+            previous_rows, snapshot.rows, snapshot.headers, previous_headers
+        ):
             all_changes.append((snapshot, change))
 
     # First time we ever see this subscription: store a baseline silently.
