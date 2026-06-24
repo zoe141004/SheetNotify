@@ -61,6 +61,16 @@ def _row_is_empty(row: dict[str, Any] | None, headers: list[str]) -> bool:
     return all(_normalize(row.get(header)) == "" for header in headers)
 
 
+def column_letter(index: int) -> str:
+    """0-based column index → spreadsheet letter (0→A, 25→Z, 26→AA)."""
+    result = ""
+    index += 1
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
 def _row_number_of(row: dict[str, Any], fallback: int) -> int:
     try:
         return int(row.get("_row_number", fallback))
@@ -142,11 +152,13 @@ def detect_changes(
                 if _normalize(prev_row.get(header)) != _normalize(curr_row.get(header))
             ]
             if changed_columns:
-                cell_reference = (
-                    f"{changed_columns[0]}{curr_number}"
-                    if len(changed_columns) == 1
-                    else None
-                )
+                # Single-cell edits get an A1-style reference (e.g. "E2"); the
+                # column letter comes from the header's position in the sheet.
+                if len(changed_columns) == 1:
+                    col_index = headers.index(changed_columns[0])
+                    cell_reference = f"{column_letter(col_index)}{curr_number}"
+                else:
+                    cell_reference = None
                 changes.append(
                     RowChange(
                         change_type="update",
