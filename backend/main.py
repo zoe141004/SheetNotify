@@ -9,11 +9,13 @@ import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from config import settings
 from database import engine, Base
 from services.schema_sync import ensure_polling_schema
 from services.poller import run_polling_loop
+from services.drive_watch import run_drive_maintenance_loop
 from services.telegram import set_telegram_webhook
 from services.runtime_urls import resolve_backend_url
 
@@ -28,24 +30,30 @@ async def lifespan(app: FastAPI):
 
     await ensure_polling_schema(engine)
 
-    if settings.ENVIRONMENT.lower() != "development":
-        try:
-            backend_url = resolve_backend_url()
-            webhook_url = f"{backend_url}/api/telegram/webhook"
-            await set_telegram_webhook(webhook_url)
-        except Exception:
-            logger.exception("Failed to auto-configure Telegram webhook")
+    # Auto-register the Telegram webhook when we can resolve a public URL.
+    # (resolve_backend_url raises if only a localhost URL is available.)
+    try:
+        backend_url = resolve_backend_url()
+        webhook_url = f"{backend_url}/api/telegram/webhook"
+        await set_telegram_webhook(webhook_url)
+    except Exception:
+        logger.warning("Skipping Telegram webhook auto-setup (no public BACKEND_URL)")
 
-    polling_task = None
-    if settings.ENVIRONMENT.lower() != "development":
-        polling_task = asyncio.create_task(run_polling_loop(60))
+    background_tasks: list[asyncio.Task] = []
+    if settings.ENABLE_POLLING:
+        background_tasks.append(
+            asyncio.create_task(run_polling_loop(settings.POLLING_CYCLE_SECONDS))
+        )
+    if settings.ENABLE_DRIVE_WEBHOOK:
+        background_tasks.append(asyncio.create_task(run_drive_maintenance_loop()))
 
     yield
 
-    if polling_task is not None:
-        polling_task.cancel()
+    for task in background_tasks:
+        task.cancel()
+    for task in background_tasks:
         try:
-            await polling_task
+            await task
         except asyncio.CancelledError:
             pass
     await engine.dispose()
@@ -57,6 +65,11 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+@app.get("/google1dc6bc0faf4c2840.html", response_class=PlainTextResponse)
+async def google_verification():
+    # Nội dung trả về chính là dòng chữ bên trong file Google yêu cầu
+    return "google-site-verification: google1dc6bc0faf4c2840.html"
 
 # ── CORS Middleware ──
 app.add_middleware(

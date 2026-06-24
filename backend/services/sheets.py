@@ -117,13 +117,19 @@ async def get_sheet_snapshot(
     db: AsyncSession,
     spreadsheet_id: str,
     sheet_name: str,
+    metadata: Optional[dict[str, object]] = None,
 ) -> SheetSnapshot | None:
-    """Fetch a simplified snapshot for a single sheet/tab."""
+    """Fetch a simplified snapshot for a single sheet/tab.
+
+    ``metadata`` may be supplied by the caller (e.g. when snapshotting every tab
+    of a spreadsheet) to avoid re-fetching spreadsheet metadata for each tab.
+    """
     access_token = await get_valid_google_token(user, db)
     if not access_token:
         return None
 
-    metadata = await get_spreadsheet_metadata(user, db, spreadsheet_id)
+    if metadata is None:
+        metadata = await get_spreadsheet_metadata(user, db, spreadsheet_id)
     if not metadata:
         return None
 
@@ -205,7 +211,9 @@ async def get_spreadsheet_snapshots(
 
     snapshots: list[SheetSnapshot] = []
     for sheet_name in sheet_names:
-        snapshot = await get_sheet_snapshot(user, db, spreadsheet_id, sheet_name)
+        snapshot = await get_sheet_snapshot(
+            user, db, spreadsheet_id, sheet_name, metadata=metadata
+        )
         if snapshot is not None:
             snapshots.append(snapshot)
     return snapshots
@@ -239,7 +247,7 @@ async def create_subscription(
         sheet_gid=sheet_gid,
         notification_template=notification_template,
         polling_enabled=polling_enabled,
-        polling_interval_minutes=polling_interval_minutes,
+        polling_interval_minutes=max(int(polling_interval_minutes or 1), 1),
         track_all_sheets=track_all_sheets,
         monitored_sheet_names=monitored_sheet_names,
     )
