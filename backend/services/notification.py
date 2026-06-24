@@ -224,6 +224,9 @@ def format_changes_message(
     are combined into one message (Telegram allows ~4096 chars; we cap and add
     a truncation note if needed).
     """
+    if not groups:
+        return ""
+
     total = sum(len(changes) for _, changes in groups.values())
     multi_sheet = len(groups) > 1
 

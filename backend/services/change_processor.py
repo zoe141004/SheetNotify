@@ -165,6 +165,16 @@ async def process_subscription_changes(
         await session.commit()
         return {"status": "baseline", "message": "Initial snapshot stored", "changes": 0}
 
+    # Nothing meaningful changed this cycle: refresh the stored snapshot (so any
+    # filtered-out blank edits are not re-detected later) and stop. No message.
+    if not all_changes:
+        subscription.last_state_snapshot = current_state
+        subscription.last_polled_at = now
+        subscription.last_poll_error = None
+        subscription.poll_failure_count = 0
+        await session.commit()
+        return {"status": "ok", "changes": 0, "telegram_linked": user.telegram_chat_id is not None}
+
     telegram_linked = user.telegram_chat_id is not None
     sent_count = 0
 
