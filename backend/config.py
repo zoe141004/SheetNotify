@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Background polling worker (default change-detection trigger).
     ENABLE_POLLING: bool = True
     POLLING_CYCLE_SECONDS: int = 60
+    # Pause a subscription's polling after this many consecutive failures
+    # (e.g. revoked Google access) so we stop hammering a broken sheet.
+    MAX_POLL_FAILURES: int = 10
 
     # Google Drive push notifications (near real-time trigger).
     # Requires BACKEND_URL to be a PUBLIC, domain-verified HTTPS URL
