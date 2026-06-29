@@ -4,7 +4,6 @@ All values are read from environment variables or .env file.
 """
 
 from pydantic_settings import BaseSettings
-from typing import Optional
 
 
 class Settings(BaseSettings):

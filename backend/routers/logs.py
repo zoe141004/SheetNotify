@@ -4,7 +4,7 @@ Logs router — notification history and stats.
 
 import uuid
 from math import ceil
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
@@ -14,7 +14,7 @@ from database import get_db
 from middleware.auth import get_current_user
 from models.user import User
 from models.notification import NotificationLog
-from schemas.notification import NotificationLogResponse, NotificationStats, PaginatedLogs
+from schemas.notification import NotificationStats, PaginatedLogs
 
 router = APIRouter()
 
