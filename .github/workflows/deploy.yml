@@ -42,3 +42,17 @@ jobs:
             --no-cpu-throttling \
             --update-env-vars FRONTEND_URL=https://sheet-notify.vercel.app \
             --quiet
+
+      - name: Smoke test (post-deploy health)
+        run: |
+          URL=$(gcloud run services describe sheetnotify-api \
+            --project "${{ vars.GCP_PROJECT }}" --region "${{ vars.GCP_REGION }}" \
+            --format='value(status.url)')
+          echo "Health-checking $URL/health"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsS "$URL/health" | grep -q healthy; then
+              echo "✅ Service healthy"; exit 0
+            fi
+            echo "attempt $attempt: not healthy yet, retrying..."; sleep 5
+          done
+          echo "❌ Service did not report healthy after deploy"; exit 1
