@@ -38,6 +38,43 @@ jobs:
         continue-on-error: true
         run: pip-audit -r requirements.txt
 
+  integration:
+    name: Backend integration (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sheetnotify_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/sheetnotify_test
+      RUN_DB_TESTS: "1"
+      SECRET_KEY: ci-only-test-secret-key-at-least-32-bytes-long-000
+      ENVIRONMENT: development
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run integration tests
+        run: pytest tests/test_integration_db.py -q
+
   frontend:
     name: Frontend (lint + build)
     runs-on: ubuntu-latest
