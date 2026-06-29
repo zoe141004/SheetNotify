@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # (e.g. revoked Google access) so we stop hammering a broken sheet.
     MAX_POLL_FAILURES: int = 10
 
+    # Shared secret for the Cloud Scheduler → /api/internal/poll trigger
+    # (free scale-to-zero mode, instead of an always-on in-process loop).
+    INTERNAL_POLL_SECRET: str = ""
+
     # Google Drive push notifications (near real-time trigger).
     # Requires BACKEND_URL to be a PUBLIC, domain-verified HTTPS URL
     # (a *.run.app URL cannot be verified — use a custom domain).

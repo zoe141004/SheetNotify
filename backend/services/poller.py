@@ -36,21 +36,32 @@ async def poll_subscription(subscription_id) -> None:
             logger.exception("Polling failed for subscription %s", subscription_id)
 
 
+async def run_poll_cycle() -> int:
+    """Run ONE polling pass over all active polling-enabled subscriptions.
+
+    Returns the number of subscriptions processed. Used by both the in-process
+    loop (always-on mode) and the Cloud Scheduler endpoint (free scale-to-zero
+    mode), so polling works without keeping an instance running 24/7.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(SheetSubscription.id).where(
+                SheetSubscription.is_active.is_(True),
+                SheetSubscription.polling_enabled.is_(True),
+            )
+        )
+        subscription_ids = list(result.scalars().all())
+
+    for subscription_id in subscription_ids:
+        await poll_subscription(subscription_id)
+    return len(subscription_ids)
+
+
 async def run_polling_loop(poll_interval_seconds: int = 60) -> None:
-    """Continuously poll all active polling-enabled subscriptions."""
+    """Continuously poll (always-on mode). Free mode uses run_poll_cycle via Scheduler."""
     while True:
         try:
-            async with async_session() as session:
-                result = await session.execute(
-                    select(SheetSubscription.id).where(
-                        SheetSubscription.is_active.is_(True),
-                        SheetSubscription.polling_enabled.is_(True),
-                    )
-                )
-                subscription_ids = list(result.scalars().all())
-
-            for subscription_id in subscription_ids:
-                await poll_subscription(subscription_id)
+            await run_poll_cycle()
         except asyncio.CancelledError:
             raise
         except Exception:
