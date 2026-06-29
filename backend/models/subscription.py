@@ -6,7 +6,7 @@ from sqlalchemy import Column, String
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Boolean, Integer, ForeignKey, UniqueConstraint, DateTime, text
+from sqlalchemy import Boolean, Integer, ForeignKey, UniqueConstraint, DateTime, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,8 +35,8 @@ class SheetSubscription(Base):
     sheet_gid: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     webhook_secret = Column(
-        String(255), 
-        nullable=False, 
+        String(255),
+        nullable=False,
         default=lambda: secrets.token_hex(32),
     )
 

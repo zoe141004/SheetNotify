@@ -12,7 +12,6 @@ import httpx
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
 from models.user import User
 from models.subscription import SheetSubscription
 from schemas.subscription import SpreadsheetInfo, SheetTab

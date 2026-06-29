@@ -1,0 +1,10 @@
+# Ruff lint config for the SheetNotify backend.
+line-length = 120
+target-version = "py311"
+
+# Alembic env.py legitimately imports after load_dotenv(); skip framework scaffolding.
+extend-exclude = ["alembic"]
+
+[lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]  # line length handled loosely; not worth failing CI over

@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,7 +40,7 @@ async def get_current_user(
                 detail="Invalid authentication token",
             )
         user_id = uuid.UUID(user_id_str)
-    except (JWTError, ValueError):
+    except (jwt.InvalidTokenError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",
