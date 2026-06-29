@@ -30,6 +30,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.notification import NotificationLog
 from models.subscription import SheetSubscription
 from models.user import User
@@ -56,6 +57,19 @@ async def _try_advisory_lock(session: AsyncSession, subscription_id: Any) -> boo
         {"key": _advisory_lock_key(subscription_id)},
     )
     return bool(result.scalar())
+
+
+def _record_poll_failure(subscription: SheetSubscription, now: datetime, error: str) -> None:
+    """Increment the failure counter and auto-pause polling after too many."""
+    subscription.last_poll_error = error
+    subscription.poll_failure_count = (subscription.poll_failure_count or 0) + 1
+    subscription.last_polled_at = now
+    if subscription.poll_failure_count >= settings.MAX_POLL_FAILURES:
+        subscription.polling_enabled = False
+        subscription.last_poll_error = (
+            f"Polling paused after {subscription.poll_failure_count} consecutive "
+            f"failures. Last error: {error}"
+        )
 
 
 async def process_subscription_changes(
@@ -120,9 +134,7 @@ async def process_subscription_changes(
             )
             snapshots = [single] if single is not None else []
     except Exception as exc:  # network / API error
-        subscription.last_poll_error = str(exc)
-        subscription.poll_failure_count = (subscription.poll_failure_count or 0) + 1
-        subscription.last_polled_at = now
+        _record_poll_failure(subscription, now, str(exc))
         await session.commit()
         logger.exception("Failed to fetch sheet data for subscription %s", subscription_id)
         return {"status": "failed", "message": "Failed to fetch sheet data"}
@@ -131,9 +143,9 @@ async def process_subscription_changes(
         # Could not read the sheet (revoked token, lost access, etc.). Record the
         # error but DO NOT overwrite the stored snapshot, otherwise the next
         # successful poll would treat every existing row as brand new.
-        subscription.last_poll_error = "Unable to fetch sheet data (no access or empty response)"
-        subscription.poll_failure_count = (subscription.poll_failure_count or 0) + 1
-        subscription.last_polled_at = now
+        _record_poll_failure(
+            subscription, now, "Unable to fetch sheet data (no access or empty response)"
+        )
         await session.commit()
         return {"status": "failed", "message": "Unable to fetch sheet data"}
 
