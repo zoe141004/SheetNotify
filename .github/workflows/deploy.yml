@@ -56,3 +56,11 @@ jobs:
             echo "attempt $attempt: not healthy yet, retrying..."; sleep 5
           done
           echo "❌ Service did not report healthy after deploy"; exit 1
+
+      - name: Alert on failure (Telegram)
+        if: failure() && vars.TELEGRAM_ALERT_CHAT_ID != ''
+        run: |
+          curl -fsS "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ vars.TELEGRAM_ALERT_CHAT_ID }}" \
+            --data-urlencode "text=❌ SheetNotify CD deploy FAILED on main.
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
