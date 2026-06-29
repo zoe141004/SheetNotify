@@ -37,9 +37,11 @@ jobs:
             --source backend \
             --project "${{ vars.GCP_PROJECT }}" \
             --region "${{ vars.GCP_REGION }}" \
-            --add-cloudsql-instances sheetnotify-500318:us-central1:sheetnotify-db \
-            --min-instances=1 \
-            --no-cpu-throttling \
+            --min-instances=0 \
+            --cpu-throttling \
+            --network=default \
+            --subnet=default \
+            --vpc-egress=private-ranges-only \
             --update-env-vars FRONTEND_URL=https://sheet-notify.vercel.app \
             --quiet
 

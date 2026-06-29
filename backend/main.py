@@ -81,12 +81,13 @@ app.add_middleware(
 )
 
 # ── Include Routers ──
-from routers import auth, sheets, telegram, webhook, logs  # noqa: E402
+from routers import auth, sheets, telegram, webhook, logs, internal  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(sheets.router, prefix="/api/sheets", tags=["Google Sheets"])
 app.include_router(telegram.router, prefix="/api/telegram", tags=["Telegram"])
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
+app.include_router(internal.router, prefix="/api/internal", tags=["Internal"])
 app.include_router(logs.router, prefix="/api/logs", tags=["Logs"])
 
 
