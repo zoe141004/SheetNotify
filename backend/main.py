@@ -16,8 +16,6 @@ from database import engine, Base
 from services.schema_sync import ensure_polling_schema
 from services.poller import run_polling_loop
 from services.drive_watch import run_drive_maintenance_loop
-from services.telegram import set_telegram_webhook
-from services.runtime_urls import resolve_backend_url
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +28,9 @@ async def lifespan(app: FastAPI):
 
     await ensure_polling_schema(engine)
 
-    # Auto-register the Telegram webhook when we can resolve a public URL.
-    # (resolve_backend_url raises if only a localhost URL is available.)
-    try:
-        backend_url = resolve_backend_url()
-        webhook_url = f"{backend_url}/api/telegram/webhook"
-        await set_telegram_webhook(webhook_url)
-    except Exception:
-        logger.warning("Skipping Telegram webhook auto-setup (no public BACKEND_URL)")
+    # NOTE: Telegram webhook is registered ONCE via POST /api/telegram/setup-webhook
+    # (or manually), not on every cold start — keeps scale-to-zero cold starts fast
+    # and free of an external Telegram call. Re-run setup only if BACKEND_URL changes.
 
     background_tasks: list[asyncio.Task] = []
     if settings.ENABLE_POLLING:

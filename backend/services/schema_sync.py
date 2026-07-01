@@ -67,5 +67,13 @@ async def ensure_polling_schema(engine: AsyncEngine) -> None:
     ]
 
     async with engine.begin() as conn:
+        # Fast path: if the newest column already exists, the schema is current —
+        # skip all 14 ALTERs so cold starts (scale-to-zero) do a single query.
+        existing = await conn.exec_driver_sql(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'notification_logs' AND column_name = 'detection_method'"
+        )
+        if existing.first():
+            return
         for statement in statements:
             await conn.exec_driver_sql(statement)
